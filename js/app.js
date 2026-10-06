@@ -1,22 +1,443 @@
 (function(){
 'use strict';
-const cfg=window.RBN_CONFIG||{}; const $=id=>document.getElementById(id);
-function setMsg(id,text,ok=false){const e=$(id);if(!e)return;e.textContent=text||'';e.classList.toggle('success',!!ok)}
-function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
-function client(){if(!window.supabase)throw new Error('Библиотека Supabase не загрузилась.');if(!cfg.SUPABASE_URL||!cfg.SUPABASE_ANON_KEY)throw new Error('Supabase не настроен. Проверьте public/js/config.js.');if(/\/(rest|auth)\/v1\/?$/.test(cfg.SUPABASE_URL))throw new Error('SUPABASE_URL указан неправильно: удалите /rest/v1/ или /auth/v1/.');return window.supabase.createClient(cfg.SUPABASE_URL.replace(/\/$/,''),cfg.SUPABASE_ANON_KEY)}
-function newsCard(n){return `<article class="card">${n.image_url?`<img src="${esc(n.image_url)}" alt="">`:''}<span class="muted">${esc(n.category||'Новости')} · ${esc(n.created_at?new Date(n.created_at).toLocaleString('ru-RU'):'')}</span><h3>${esc(n.title)}</h3><p>${esc(n.summary||'')}</p><small>Источник: ${esc(n.source_name||'не указан')}</small>${n.source_url?`<p><a href="${esc(n.source_url)}" target="_blank" rel="noopener">Первоисточник →</a></p>`:''}</article>`}
-function fundCard(f,admin=false){const t=Number(f.target_amount||0),c=Number(f.current_amount||0),p=t?Math.min(100,c/t*100):0;return `<article class="card">${f.image_url?`<img src="${esc(f.image_url)}" alt="">`:''}<h3>${esc(f.title)}</h3><p>${esc(f.description||'')}</p><b>${c.toLocaleString('ru-RU')} ${esc(f.currency)} / ${t.toLocaleString('ru-RU')} ${esc(f.currency)}</b><div class="progress"><i style="width:${p}%"></i></div><p class="muted">${p.toFixed(0)}%</p><a class="button" href="${esc(f.donation_url)}" target="_blank" rel="noopener">Пожертвовать</a>${admin?`<div class="admin-item"><button class="button danger small" data-delete-fund="${esc(f.id)}">Удалить</button></div>`:''}</article>`}
-async function loadNews(category=''){const sb=client();let q=sb.from('news').select('*').eq('status','published').order('created_at',{ascending:false}).limit(100);if(category)q=q.eq('category',category);const {data,error}=await q;if(error)throw error;const e=$('news');if(e)e.innerHTML=(data||[]).map(newsCard).join('')||'<p class="muted">Новостей пока нет.</p>'}
-async function loadFunds(id,admin=false){const sb=client();const {data,error}=await sb.from('fundraisers').select('*').eq('status','active').order('created_at',{ascending:false});if(error)throw error;const e=$(id);if(!e)return;e.innerHTML=(data||[]).map(f=>fundCard(f,admin)).join('')||'<p class="muted">Сборов пока нет.</p>';if(admin)e.querySelectorAll('[data-delete-fund]').forEach(b=>b.onclick=async()=>{if(!confirm('Удалить этот сбор?'))return;const {error}=await sb.from('fundraisers').delete().eq('id',b.dataset.deleteFund);if(error){setMsg('admin-message',error.message);return}await loadFunds(id,true)})}
-async function requireAdmin(){const sb=client();const {data:{user},error:a}=await sb.auth.getUser();if(a)throw a;if(!user){location.href='login.html';return null}const {data:p,error}=await sb.from('profiles').select('role,name').eq('id',user.id).single();if(error)throw error;if(p.role!=='admin'){document.body.innerHTML='<main class="container"><h1>403</h1><p>Доступ запрещён.</p><a class="button" href="index.html">На главную</a></main>';return null}return{sb,user,p}}
-async function initRegister(){const f=$('register-form');if(!f)return;f.onsubmit=async e=>{e.preventDefault();setMsg('register-message','Создаём аккаунт…');try{const sb=client();const name=$('register-name').value.trim(),email=$('register-email').value.trim(),password=$('register-password').value;const {data,error}=await sb.auth.signUp({email,password,options:{data:{name}}});if(error)throw error;if(data.session){setMsg('register-message','Аккаунт создан. Выполняется вход…',true);location.href='profile.html'}else setMsg('register-message','Аккаунт создан. Проверьте почту и подтвердите email.',true)}catch(err){console.error(err);setMsg('register-message','Ошибка регистрации: '+(err.message||String(err)))}}}
-async function initLogin(){const f=$('login-form');if(!f)return;f.onsubmit=async e=>{e.preventDefault();setMsg('login-message','Выполняем вход…');try{const sb=client();const {error}=await sb.auth.signInWithPassword({email:$('login-email').value.trim(),password:$('login-password').value});if(error)throw error;location.href='profile.html'}catch(err){console.error(err);setMsg('login-message','Ошибка входа: '+(err.message||String(err)))}}}
-async function initProfile(){const e=$('profile');try{const sb=client(),{data:{user},error}=await sb.auth.getUser();if(error)throw error;if(!user){e.innerHTML='<a class="button" href="login.html">Войти</a>';return}const {data:p,error:pe}=await sb.from('profiles').select('*').eq('id',user.id).single();if(pe)throw pe;e.innerHTML=`<div class="panel"><h2>${esc(p.name||user.email)}</h2><p>${esc(user.email)}</p><p>Роль: <b>${esc(p.role)}</b></p><button class="button" id="logout">Выйти</button></div>`;$('logout').onclick=async()=>{await sb.auth.signOut();location.href='index.html'}}catch(err){e.innerHTML='<div class="message">Ошибка: '+esc(err.message||String(err))+'</div>'}}
-async function initAdmin(){try{const c=await requireAdmin();if(!c)return;await loadFunds('admin-funds',true);$('fund-form').onsubmit=async e=>{e.preventDefault();setMsg('admin-message','Создаём сбор…');try{const {error}=await c.sb.from('fundraisers').insert({title:$('fund-title').value.trim(),description:$('fund-description').value.trim(),target_amount:Number($('fund-target').value),currency:$('fund-currency').value.trim().toUpperCase(),image_url:$('fund-image').value.trim()||null,donation_url:$('fund-donation').value.trim(),end_date:$('fund-end').value||null});if(error)throw error;e.target.reset();$('fund-currency').value='RUB';setMsg('admin-message','Сбор создан.',true);await loadFunds('admin-funds',true)}catch(err){console.error(err);setMsg('admin-message','Ошибка создания сбора: '+(err.message||String(err)))}}}catch(err){console.error(err);setMsg('admin-message','Ошибка админ-панели: '+(err.message||String(err)))}}
-function initNewsPage(){document.querySelectorAll('[data-category]').forEach(b=>b.onclick=()=>loadNews(b.dataset.category).catch(e=>{$('news').innerHTML='<div class="message">Ошибка: '+esc(e.message||String(e))+'</div>'}));loadNews().catch(e=>{$('news').innerHTML='<div class="message">Ошибка загрузки новостей: '+esc(e.message||String(e))+'</div>'})}
-async function initHome(){try{const sb=client();const {data,error}=await sb.from('news').select('*').eq('status','published').order('created_at',{ascending:false}).limit(6);if(error)throw error;$('latest').innerHTML=(data||[]).map(newsCard).join('')||'<p class="muted">Новостей пока нет.</p>';await loadFunds('home-funds')}catch(e){console.error(e);$('latest').innerHTML='<p class="muted">Проверьте подключение Supabase.</p>'}}
-function initFundraisingPage(){loadFunds('funds').catch(e=>{$('funds').innerHTML='<div class="message">Ошибка: '+esc(e.message||String(e))+'</div>'})}
-window.RBN={initRegister,initLogin,initProfile,initAdmin,initNewsPage,initHome,initFundraisingPage};
+
+const cfg=window.RBN_CONFIG||{};
+const $=id=>document.getElementById(id);
+
+function setMsg(id,text,ok=false){
+    const e=$(id);
+    if(!e)return;
+    e.textContent=text||'';
+    e.classList.toggle('success',!!ok);
+}
+
+function esc(v){
+    const d=document.createElement('div');
+    d.textContent=v==null?'':String(v);
+    return d.innerHTML;
+}
+
+function client(){
+    if(!window.supabase)
+        throw new Error('Библиотека Supabase не загрузилась.');
+
+    if(!cfg.SUPABASE_URL||!cfg.SUPABASE_ANON_KEY)
+        throw new Error('Supabase не настроен. Проверьте public/js/config.js.');
+
+    if(/\/(rest|auth)\/v1\/?$/.test(cfg.SUPABASE_URL))
+        throw new Error('SUPABASE_URL указан неправильно: удалите /rest/v1/ или /auth/v1/.');
+
+    return window.supabase.createClient(
+        cfg.SUPABASE_URL.replace(/\/$/,''),
+        cfg.SUPABASE_ANON_KEY
+    );
+}
+
+function newsCard(n){
+    return `<article class="card">
+        ${n.image_url?`<img src="${esc(n.image_url)}" alt="">`:''}
+        <span class="muted">${esc(n.category||'Новости')} · ${esc(n.created_at?new Date(n.created_at).toLocaleString('ru-RU'):'')}</span>
+        <h3>${esc(n.title)}</h3>
+        <p>${esc(n.summary||'')}</p>
+        <small>Источник: ${esc(n.source_name||'не указан')}</small>
+        ${n.source_url?`<p><a href="${esc(n.source_url)}" target="_blank" rel="noopener">Первоисточник →</a></p>`:''}
+    </article>`;
+}
+
+function fundCard(f,admin=false){
+    const t=Number(f.target_amount||0);
+    const c=Number(f.current_amount||0);
+    const p=t?Math.min(100,c/t*100):0;
+
+    return `<article class="card">
+        ${f.image_url?`<img src="${esc(f.image_url)}" alt="">`:''}
+        <h3>${esc(f.title)}</h3>
+        <p>${esc(f.description||'')}</p>
+        <b>${c.toLocaleString('ru-RU')} ${esc(f.currency)} / ${t.toLocaleString('ru-RU')} ${esc(f.currency)}</b>
+        <div class="progress"><i style="width:${p}%"></i></div>
+        <p class="muted">${p.toFixed(0)}%</p>
+        <a class="button" href="${esc(f.donation_url)}" target="_blank" rel="noopener">Пожертвовать</a>
+        ${admin?`<div class="admin-item"><button class="button danger small" data-delete-fund="${esc(f.id)}">Удалить</button></div>`:''}
+    </article>`;
+}
+
+async function loadNews(category=''){
+    const sb=client();
+
+    let q=sb
+        .from('news')
+        .select('*')
+        .eq('status','published')
+        .order('created_at',{ascending:false})
+        .limit(100);
+
+    if(category)q=q.eq('category',category);
+
+    const {data,error}=await q;
+
+    if(error)throw error;
+
+    const e=$('news');
+
+    if(e)
+        e.innerHTML=(data||[]).map(newsCard).join('')||
+        '<p class="muted">Новостей пока нет.</p>';
+}
+
+async function loadFunds(id,admin=false){
+    const sb=client();
+
+    const {data,error}=await sb
+        .from('fundraisers')
+        .select('*')
+        .eq('status','active')
+        .order('created_at',{ascending:false});
+
+    if(error)throw error;
+
+    const e=$(id);
+    if(!e)return;
+
+    e.innerHTML=(data||[]).map(f=>fundCard(f,admin)).join('')||
+        '<p class="muted">Сборов пока нет.</p>';
+
+    if(admin){
+        e.querySelectorAll('[data-delete-fund]').forEach(b=>{
+            b.onclick=async()=>{
+                if(!confirm('Удалить этот сбор?'))return;
+
+                const {error}=await sb
+                    .from('fundraisers')
+                    .delete()
+                    .eq('id',b.dataset.deleteFund);
+
+                if(error){
+                    setMsg('admin-message',error.message);
+                    return;
+                }
+
+                await loadFunds(id,true);
+            };
+        });
+    }
+}
+
+async function requireAdmin(){
+    const sb=client();
+
+    const {data:{user},error:a}=await sb.auth.getUser();
+
+    if(a)throw a;
+
+    if(!user){
+        location.href='login.html';
+        return null;
+    }
+
+    const {data:p,error}=await sb
+        .from('profiles')
+        .select('role,name')
+        .eq('id',user.id)
+        .single();
+
+    if(error)throw error;
+
+    if(p.role!=='admin'){
+        document.body.innerHTML=
+            '<main class="container"><h1>403</h1><p>Доступ запрещён.</p><a class="button" href="index.html">На главную</a></main>';
+
+        return null;
+    }
+
+    return{sb,user,p};
+}
+
+async function initRegister(){
+    const f=$('register-form');
+
+    if(!f)return;
+
+    f.onsubmit=async e=>{
+        e.preventDefault();
+
+        setMsg('register-message','Создаём аккаунт…');
+
+        try{
+            const sb=client();
+
+            const name=$('register-name').value.trim();
+            const email=$('register-email').value.trim();
+            const password=$('register-password').value;
+
+            const {data,error}=await sb.auth.signUp({
+                email,
+                password,
+                options:{
+                    data:{name}
+                }
+            });
+
+            if(error)throw error;
+
+            if(data.session){
+                setMsg(
+                    'register-message',
+                    'Аккаунт создан. Выполняется вход…',
+                    true
+                );
+
+                location.href='profile.html';
+            }else{
+                setMsg(
+                    'register-message',
+                    'Аккаунт создан. Проверьте почту и подтвердите email.',
+                    true
+                );
+            }
+
+        }catch(err){
+            console.error(err);
+
+            setMsg(
+                'register-message',
+                'Ошибка регистрации: '+(err.message||String(err))
+            );
+        }
+    };
+}
+
+
+/* =========================================================
+   ВХОД — ДИАГНОСТИКА
+   ========================================================= */
+
+async function initLogin(){
+    const f=$('login-form');
+
+    if(!f)return;
+
+    f.onsubmit=async e=>{
+        e.preventDefault();
+
+        const email=$('login-email').value.trim();
+        const password=$('login-password').value;
+
+        console.log('================ LOGIN DEBUG ================');
+        console.log('LOGIN EMAIL:',JSON.stringify(email));
+        console.log('LOGIN PASSWORD LENGTH:',password.length);
+
+        setMsg('login-message','Выполняем вход…');
+
+        try{
+            const sb=client();
+
+            console.log('SUPABASE URL:',cfg.SUPABASE_URL);
+
+            const {data,error}=await sb.auth.signInWithPassword({
+                email:email,
+                password:password
+            });
+
+            console.log('LOGIN RESULT:',data);
+            console.log('LOGIN ERROR:',error);
+
+            if(error)throw error;
+
+            console.log('LOGIN SUCCESS');
+            console.log('USER:',data.user);
+
+            setMsg(
+                'login-message',
+                'Вход выполнен.',
+                true
+            );
+
+            location.href='profile.html';
+
+        }catch(err){
+
+            console.error('LOGIN FAILED:',err);
+
+            setMsg(
+                'login-message',
+                'Ошибка входа: '+(err.message||String(err))
+            );
+        }
+    };
+}
+
+
+async function initProfile(){
+    const e=$('profile');
+
+    try{
+        const sb=client();
+
+        const {data:{user},error}=await sb.auth.getUser();
+
+        if(error)throw error;
+
+        if(!user){
+            e.innerHTML='<a class="button" href="login.html">Войти</a>';
+            return;
+        }
+
+        const {data:p,error:pe}=await sb
+            .from('profiles')
+            .select('*')
+            .eq('id',user.id)
+            .single();
+
+        if(pe)throw pe;
+
+        e.innerHTML=`
+            <div class="panel">
+                <h2>${esc(p.name||user.email)}</h2>
+                <p>${esc(user.email)}</p>
+                <p>Роль: <b>${esc(p.role)}</b></p>
+                <button class="button" id="logout">Выйти</button>
+            </div>
+        `;
+
+        $('logout').onclick=async()=>{
+            await sb.auth.signOut();
+            location.href='index.html';
+        };
+
+    }catch(err){
+        e.innerHTML=
+            '<div class="message">Ошибка: '+
+            esc(err.message||String(err))+
+            '</div>';
+    }
+}
+
+async function initAdmin(){
+    try{
+        const c=await requireAdmin();
+
+        if(!c)return;
+
+        await loadFunds('admin-funds',true);
+
+        $('fund-form').onsubmit=async e=>{
+            e.preventDefault();
+
+            setMsg('admin-message','Создаём сбор…');
+
+            try{
+                const {error}=await c.sb
+                    .from('fundraisers')
+                    .insert({
+                        title:$('fund-title').value.trim(),
+                        description:$('fund-description').value.trim(),
+                        target_amount:Number($('fund-target').value),
+                        currency:$('fund-currency').value.trim().toUpperCase(),
+                        image_url:$('fund-image').value.trim()||null,
+                        donation_url:$('fund-donation').value.trim(),
+                        end_date:$('fund-end').value||null
+                    });
+
+                if(error)throw error;
+
+                e.target.reset();
+
+                $('fund-currency').value='RUB';
+
+                setMsg(
+                    'admin-message',
+                    'Сбор создан.',
+                    true
+                );
+
+                await loadFunds('admin-funds',true);
+
+            }catch(err){
+                console.error(err);
+
+                setMsg(
+                    'admin-message',
+                    'Ошибка создания сбора: '+(err.message||String(err))
+                );
+            }
+        };
+
+    }catch(err){
+        console.error(err);
+
+        setMsg(
+            'admin-message',
+            'Ошибка админ-панели: '+(err.message||String(err))
+        );
+    }
+}
+
+function initNewsPage(){
+    document
+        .querySelectorAll('[data-category]')
+        .forEach(b=>{
+            b.onclick=()=>loadNews(b.dataset.category).catch(e=>{
+                $('news').innerHTML=
+                    '<div class="message">Ошибка: '+
+                    esc(e.message||String(e))+
+                    '</div>';
+            });
+        });
+
+    loadNews().catch(e=>{
+        $('news').innerHTML=
+            '<div class="message">Ошибка загрузки новостей: '+
+            esc(e.message||String(e))+
+            '</div>';
+    });
+}
+
+async function initHome(){
+    try{
+        const sb=client();
+
+        const {data,error}=await sb
+            .from('news')
+            .select('*')
+            .eq('status','published')
+            .order('created_at',{ascending:false})
+            .limit(6);
+
+        if(error)throw error;
+
+        $('latest').innerHTML=(data||[]).map(newsCard).join('')||
+            '<p class="muted">Новостей пока нет.</p>';
+
+        await loadFunds('home-funds');
+
+    }catch(e){
+        console.error(e);
+
+        $('latest').innerHTML=
+            '<p class="muted">Проверьте подключение Supabase.</p>';
+    }
+}
+
+function initFundraisingPage(){
+    loadFunds('funds').catch(e=>{
+        $('funds').innerHTML=
+            '<div class="message">Ошибка: '+
+            esc(e.message||String(e))+
+            '</div>';
+    });
+}
+
+window.RBN={
+    initRegister,
+    initLogin,
+    initProfile,
+    initAdmin,
+    initNewsPage,
+    initHome,
+    initFundraisingPage
+};
+
 window.setupRegister=initRegister;
 window.setupLogin=initLogin;
+
 })();
