@@ -17,4 +17,6 @@ function initNewsPage(){document.querySelectorAll('[data-category]').forEach(b=>
 async function initHome(){try{const sb=client();const {data,error}=await sb.from('news').select('*').eq('status','published').order('created_at',{ascending:false}).limit(6);if(error)throw error;$('latest').innerHTML=(data||[]).map(newsCard).join('')||'<p class="muted">Новостей пока нет.</p>';await loadFunds('home-funds')}catch(e){console.error(e);$('latest').innerHTML='<p class="muted">Проверьте подключение Supabase.</p>'}}
 function initFundraisingPage(){loadFunds('funds').catch(e=>{$('funds').innerHTML='<div class="message">Ошибка: '+esc(e.message||String(e))+'</div>'})}
 window.RBN={initRegister,initLogin,initProfile,initAdmin,initNewsPage,initHome,initFundraisingPage};
+window.setupRegister=initRegister;
+window.setupLogin=initLogin;
 })();
